@@ -1,0 +1,13 @@
+# Trained model files (too large for git, platform-specific)
+models/*.ppn
+models/*.tflite
+models/*.onnx
+
+# Audio recordings used for training
+training/recordings/
+training/data/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

@@ -1,0 +1,14 @@
+# Wake word detection dependencies
+# Install: pip install -r requirements.txt
+
+# Audio capture
+pyaudio>=0.2.14
+
+# Porcupine (Picovoice) — prototype wake word engine
+pvporcupine>=3.0.0
+
+# openWakeWord — production wake word engine
+openwakeword>=0.6.0
+
+# Shared utilities
+numpy>=1.24.0
