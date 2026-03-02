@@ -1,0 +1,39 @@
+[Unit]
+Description=Claudette Home — STT Pipeline (Whisper transcription API)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=sysop
+WorkingDirectory=/home/sysop/projects/mc-home/voice/stt_pipeline
+
+# Load secrets from environment
+EnvironmentFile=/etc/environment
+
+# Config
+Environment=WHISPER_MODEL=base.en
+Environment=WHISPER_LANGUAGE=en
+Environment=STT_PORT=8765
+Environment=STT_HOST=0.0.0.0
+
+# Optional auth key — set in /etc/environment as STT_API_KEY
+# Environment=STT_API_KEY=...
+
+ExecStart=/usr/bin/python3 -m uvicorn transcribe_api:app \
+    --host 0.0.0.0 \
+    --port 8765 \
+    --log-level info
+
+Restart=always
+RestartSec=5
+
+# Give model time to load on first request
+TimeoutStartSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claudette-stt
+
+[Install]
+WantedBy=multi-user.target

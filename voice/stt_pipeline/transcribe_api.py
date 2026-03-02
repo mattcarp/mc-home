@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""
+Claudette Home — STT Pipeline API
+Workshop-side FastAPI endpoint for audio transcription via Whisper.
+
+Architecture:
+  Android panel (mic) → wake word detected
+    → record audio → POST /transcribe
+    → Whisper transcribes
+    → { "text": "turn on the living room lights" }
+    → OpenClaw / intent parser handles the rest
+
+Usage:
+  pip install -r requirements.txt
+  uvicorn transcribe_api:app --host 0.0.0.0 --port 8765
+
+Environment:
+  WHISPER_MODEL     — model size (default: base.en — fast, English only)
+                      Options: tiny.en, base.en, small.en, medium, large-v3
+  WHISPER_LANGUAGE  — language hint (default: en)
+                      For Malta: consider "en" — Maltese/Italian handled by larger models
+  STT_API_KEY       — optional auth token (if set, clients must send Bearer <token>)
+  STT_PORT          — port to bind (default: 8765)
+  STT_HOST          — host to bind (default: 0.0.0.0)
+"""
+
+import io
+import logging
+import os
+import time
+from typing import Optional
+
+try:
+    from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    from fastapi.responses import JSONResponse
+except ImportError:
+    raise ImportError("fastapi not installed — run: pip install fastapi uvicorn")
+
+try:
+    from faster_whisper import WhisperModel
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+    # Graceful fallback — API starts in stub mode without Whisper
+    # Returns mock transcription for development/testing
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base.en")
+LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "en")
+API_KEY = os.environ.get("STT_API_KEY")  # Optional auth
+STUB_MODE = not WHISPER_AVAILABLE
+
+app = FastAPI(
+    title="Claudette Home — STT Pipeline",
+    description="Local Whisper transcription endpoint for Claudette voice pipeline",
+    version="0.1.0",
+)
+
+# Lazy-load model on first request (faster startup)
+_whisper_model: Optional["WhisperModel"] = None
+
+
+def get_model() -> Optional["WhisperModel"]:
+    """Load and cache the Whisper model on first use."""
+    global _whisper_model
+    if _whisper_model is None and WHISPER_AVAILABLE:
+        logger.info(f"Loading Whisper model: {MODEL_SIZE}")
+        t0 = time.time()
+        _whisper_model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
+        logger.info(f"Whisper model loaded in {time.time() - t0:.1f}s")
+    return _whisper_model
+
+
+# ---------------------------------------------------------------------------
+# Auth (optional)
+# ---------------------------------------------------------------------------
+security = HTTPBearer(auto_error=False)
+
+
+def verify_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    if not API_KEY:
+        return  # Auth disabled
+    if credentials is None or credentials.credentials != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+@app.get("/health")
+def health():
+    """Health check — returns model status and mode."""
+    return {
+        "status": "ok",
+        "mode": "stub" if STUB_MODE else "live",
+        "model": MODEL_SIZE if not STUB_MODE else None,
+        "whisper_loaded": _whisper_model is not None,
+    }
+
+
+@app.post("/transcribe")
+async def transcribe(
+    audio: UploadFile = File(..., description="Audio file (WAV, 16kHz mono preferred)"),
+    _: None = Depends(verify_token),
+):
+    """
+    Transcribe audio to text.
+
+    Accepts: audio/wav, audio/webm, audio/ogg, audio/mp4, audio/mpeg
+    Returns: {"text": "...", "language": "en", "duration_ms": 420, "model": "base.en"}
+
+    The panel should:
+    1. Record 16kHz mono PCM WAV from mic
+    2. POST it here as multipart/form-data with field name 'audio'
+    3. Use the returned text as the transcript for the intent parser
+    """
+    t0 = time.time()
+    audio_bytes = await audio.read()
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    logger.info(f"Received audio: {len(audio_bytes)} bytes, type={audio.content_type}")
+
+    if STUB_MODE:
+        # Development stub — no Whisper installed
+        # Useful for testing the pipeline end-to-end without GPU/Whisper
+        logger.warning("STUB MODE: Whisper not installed — returning mock transcript")
+        return JSONResponse({
+            "text": "stub transcript — install faster-whisper for real transcription",
+            "language": "en",
+            "duration_ms": int((time.time() - t0) * 1000),
+            "model": "stub",
+            "stub": True,
+        })
+
+    model = get_model()
+
+    # Transcribe from bytes
+    audio_io = io.BytesIO(audio_bytes)
+    segments, info = model.transcribe(
+        audio_io,
+        language=LANGUAGE if LANGUAGE else None,
+        beam_size=5,
+        vad_filter=True,  # Skip silence — faster for home command style audio
+        vad_parameters=dict(min_silence_duration_ms=300),
+    )
+
+    text = " ".join(seg.text.strip() for seg in segments).strip()
+    duration_ms = int((time.time() - t0) * 1000)
+
+    logger.info(f"Transcribed in {duration_ms}ms: {text!r}")
+
+    return JSONResponse({
+        "text": text,
+        "language": info.language,
+        "duration_ms": duration_ms,
+        "model": MODEL_SIZE,
+    })
+
+
+@app.get("/models")
+def list_models():
+    """Available Whisper models with latency/accuracy tradeoffs for reference."""
+    return {
+        "models": [
+            {"name": "tiny.en",   "size_mb": 75,   "wer_pct": 5.9, "speed": "fastest", "note": "good enough for clear commands"},
+            {"name": "base.en",   "size_mb": 145,  "wer_pct": 4.2, "speed": "fast",    "note": "recommended default"},
+            {"name": "small.en",  "size_mb": 466,  "wer_pct": 3.4, "speed": "medium",  "note": "better with accents"},
+            {"name": "medium",    "size_mb": 1500, "wer_pct": 3.0, "speed": "slow",    "note": "multilingual (Maltese/Italian)"},
+            {"name": "large-v3",  "size_mb": 3100, "wer_pct": 2.7, "speed": "slowest", "note": "best quality, shared with Kenneth"},
+        ],
+        "current": MODEL_SIZE,
+        "note": "For Malta, 'medium' handles Maltese-accented English and Italian. 'base.en' fine for plain English."
+    }
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    host = os.environ.get("STT_HOST", "0.0.0.0")
+    port = int(os.environ.get("STT_PORT", "8765"))
+    logger.info(f"Starting STT API on {host}:{port} (model={MODEL_SIZE}, stub={STUB_MODE})")
+    uvicorn.run(app, host=host, port=port, log_level="info")
