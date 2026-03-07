@@ -1,1 +1,8 @@
+# Intent parser dependencies
+# All three packages are optional — only the backend you use needs to be installed.
+
+# Anthropic backend (backend=anthropic)
 anthropic>=0.40.0
+
+# OpenAI + OpenRouter backend (backend=openai or backend=openrouter)
+openai>=1.0.0

@@ -3,13 +3,19 @@
 Claudette Home — Intent Parser
 Natural language → Home Assistant service call.
 
-Uses Claude (via Anthropic API) to parse user utterances into structured
-HA actions. The entity list is injected into the system prompt dynamically.
+Uses a language model to parse user utterances into structured HA actions.
+The entity list is injected into the system prompt dynamically.
+
+Supports multiple backends:
+  - anthropic   — direct Anthropic API (requires ANTHROPIC_API_KEY)
+  - openai      — OpenAI-compatible API (requires OPENAI_API_KEY)
+  - openrouter  — OpenRouter (requires OPENROUTER_API_KEY); can access any model
 
 Usage (standalone):
   python3 intent_parser.py "turn off the living room lights"
   python3 intent_parser.py "it's getting dark, sort the living room"
   python3 intent_parser.py --json-out "set up for dinner"
+  python3 intent_parser.py --backend openrouter "I'm going to bed"
 
 Usage (as module):
   from intent_parser import parse_intent
@@ -17,9 +23,12 @@ Usage (as module):
   # result: {"action": "call_service", "domain": "scene", ...}
 
 Environment:
-  ANTHROPIC_API_KEY   — required
-  HA_INTENT_MODEL     — Claude model to use (default: claude-haiku-3-5)
-  HA_INTENT_DEBUG     — set to 1 to print raw API response
+  ANTHROPIC_API_KEY     — required for backend=anthropic
+  OPENAI_API_KEY        — required for backend=openai
+  OPENROUTER_API_KEY    — required for backend=openrouter
+  HA_INTENT_MODEL       — model to use (default depends on backend)
+  HA_INTENT_BACKEND     — backend to use (default: auto-detect from available keys)
+  HA_INTENT_DEBUG       — set to 1 to print raw API response
 """
 
 import argparse
@@ -28,78 +37,229 @@ import os
 import sys
 from typing import Optional, Union
 
-try:
-    import anthropic
-except ImportError:
-    print("anthropic package not installed. Run: pip install anthropic", file=sys.stderr)
-    sys.exit(1)
-
-from ha_context import build_system_prompt, SAMPLE_ENTITIES
-
-
-# Default to haiku for low latency / low cost — home commands are short.
-DEFAULT_MODEL = os.environ.get("HA_INTENT_MODEL", "claude-haiku-3-5-20241022")
-MAX_TOKENS = 512
+# ---------------------------------------------------------------------------
+# Debug flag
+# ---------------------------------------------------------------------------
 DEBUG = os.environ.get("HA_INTENT_DEBUG", "0") == "1"
 
+# ---------------------------------------------------------------------------
+# Backend selection
+# ---------------------------------------------------------------------------
+# Models per backend — tuned for low-latency home control (short utterances)
+DEFAULT_MODELS = {
+    "anthropic": "claude-haiku-3-5-20241022",
+    "openai": "gpt-4o-mini",
+    "openrouter": "openai/gpt-4o-mini",
+}
+
+MAX_TOKENS = 512
+
+
+def _detect_backend() -> str:
+    """Auto-detect best available backend from environment keys."""
+    explicit = os.environ.get("HA_INTENT_BACKEND", "").lower()
+    if explicit in ("anthropic", "openai", "openrouter"):
+        return explicit
+
+    # Prefer openrouter (widest model choice, no separate billing)
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "openrouter"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+
+    raise EnvironmentError(
+        "No API key found. Set OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backend implementations
+# ---------------------------------------------------------------------------
+
+def _call_anthropic(
+    transcript: str,
+    system_prompt: str,
+    model: str,
+    client=None,
+) -> str:
+    """Call Anthropic API and return raw response text."""
+    try:
+        import anthropic as anthropic_sdk
+    except ImportError:
+        raise ImportError("anthropic package not installed. Run: pip install anthropic")
+
+    if client is None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise EnvironmentError("ANTHROPIC_API_KEY not set")
+        client = anthropic_sdk.Anthropic(api_key=api_key)
+
+    if DEBUG:
+        print(f"[DEBUG] Anthropic backend, model={model}, input={transcript!r}", file=sys.stderr)
+
+    message = client.messages.create(
+        model=model,
+        max_tokens=MAX_TOKENS,
+        system=system_prompt,
+        messages=[{"role": "user", "content": transcript}],
+    )
+    return message.content[0].text.strip()
+
+
+def _call_openai_compatible(
+    transcript: str,
+    system_prompt: str,
+    model: str,
+    api_key: str,
+    base_url: Optional[str] = None,
+    extra_headers: Optional[dict] = None,
+) -> str:
+    """Call an OpenAI-compatible API and return raw response text."""
+    try:
+        import openai
+    except ImportError:
+        raise ImportError("openai package not installed. Run: pip install openai")
+
+    kwargs = {
+        "api_key": api_key,
+    }
+    if base_url:
+        kwargs["base_url"] = base_url
+    if extra_headers:
+        kwargs["default_headers"] = extra_headers
+
+    client = openai.OpenAI(**kwargs)
+
+    if DEBUG:
+        print(f"[DEBUG] OpenAI-compat backend, base_url={base_url}, model={model}, input={transcript!r}", file=sys.stderr)
+
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=MAX_TOKENS,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": transcript},
+        ],
+        temperature=0.0,  # Deterministic for home control
+    )
+    return response.choices[0].message.content.strip()
+
+
+def _call_openrouter(transcript: str, system_prompt: str, model: str) -> str:
+    """Call OpenRouter API (OpenAI-compatible)."""
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise EnvironmentError("OPENROUTER_API_KEY not set")
+
+    return _call_openai_compatible(
+        transcript=transcript,
+        system_prompt=system_prompt,
+        model=model,
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+        extra_headers={
+            "HTTP-Referer": "https://github.com/mattcarp/mc-home",
+            "X-Title": "Claudette Home",
+        },
+    )
+
+
+def _call_openai(transcript: str, system_prompt: str, model: str) -> str:
+    """Call OpenAI API directly."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise EnvironmentError("OPENAI_API_KEY not set")
+
+    return _call_openai_compatible(
+        transcript=transcript,
+        system_prompt=system_prompt,
+        model=model,
+        api_key=api_key,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Strip markdown code fences
+# ---------------------------------------------------------------------------
+
+def _strip_fences(raw: str) -> str:
+    """Strip markdown code fences if the model added them (it shouldn't, but be safe)."""
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    return raw
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def parse_intent(
     transcript: str,
     entities: Optional[dict] = None,
-    model: str = DEFAULT_MODEL,
-    client: Optional[anthropic.Anthropic] = None,
+    model: Optional[str] = None,
+    backend: Optional[str] = None,
+    client=None,  # Anthropic client (legacy/testing)
 ) -> Union[dict, list]:
     """
     Parse a natural language home command into a structured HA action.
 
     Args:
-        transcript: The user's spoken/typed request.
+        transcript: The user's spoken/typed request (any language — EN, MT, IT, AR)
         entities: HA entity dict (lights, switches, scenes, etc.).
                   Defaults to SAMPLE_ENTITIES if None.
-        model: Claude model to use.
-        client: Optional pre-constructed Anthropic client.
+        model: LLM model to use. Defaults to backend-appropriate default.
+        backend: 'anthropic', 'openai', or 'openrouter'.
+                 Auto-detects from env if not specified.
+        client: Optional pre-constructed Anthropic client (for testing/legacy).
+                If provided, forces anthropic backend.
 
     Returns:
         dict or list of dicts with HA action(s).
 
     Raises:
         ValueError: If the API response cannot be parsed as JSON.
-        anthropic.APIError: On API failure.
+        EnvironmentError: If required API key is not set.
     """
+    from ha_context import build_system_prompt, SAMPLE_ENTITIES
+
     if entities is None:
         entities = SAMPLE_ENTITIES
 
-    if client is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise EnvironmentError("ANTHROPIC_API_KEY not set")
-        client = anthropic.Anthropic(api_key=api_key)
-
     system_prompt = build_system_prompt(entities)
 
-    if DEBUG:
-        print(f"[DEBUG] Sending to {model}: {transcript!r}", file=sys.stderr)
+    # If a pre-built Anthropic client is passed (e.g. from tests), use it directly
+    if client is not None:
+        raw = _call_anthropic(
+            transcript=transcript,
+            system_prompt=system_prompt,
+            model=model or DEFAULT_MODELS["anthropic"],
+            client=client,
+        )
+    else:
+        selected_backend = backend or _detect_backend()
+        selected_model = model or os.environ.get("HA_INTENT_MODEL") or DEFAULT_MODELS[selected_backend]
 
-    message = client.messages.create(
-        model=model,
-        max_tokens=MAX_TOKENS,
-        system=system_prompt,
-        messages=[
-            {"role": "user", "content": transcript}
-        ],
-    )
+        if DEBUG:
+            print(f"[DEBUG] backend={selected_backend}, model={selected_model}", file=sys.stderr)
 
-    raw = message.content[0].text.strip()
+        if selected_backend == "anthropic":
+            raw = _call_anthropic(transcript, system_prompt, selected_model)
+        elif selected_backend == "openrouter":
+            raw = _call_openrouter(transcript, system_prompt, selected_model)
+        elif selected_backend == "openai":
+            raw = _call_openai(transcript, system_prompt, selected_model)
+        else:
+            raise ValueError(f"Unknown backend: {selected_backend!r}")
 
     if DEBUG:
         print(f"[DEBUG] Raw response: {raw}", file=sys.stderr)
 
-    # Strip markdown code fences if model added them (it shouldn't, but be safe)
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
+    raw = _strip_fences(raw)
 
     try:
         result = json.loads(raw)
@@ -108,6 +268,10 @@ def parse_intent(
 
     return result
 
+
+# ---------------------------------------------------------------------------
+# Human-readable summary
+# ---------------------------------------------------------------------------
 
 def format_action_summary(action: Union[dict, list]) -> str:
     """Human-readable summary of a parsed action (for logging/display)."""
@@ -130,6 +294,10 @@ def format_action_summary(action: Union[dict, list]) -> str:
         return f"UNKNOWN_ACTION: {action}"
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
         description="Claudette Home — parse natural language into HA action"
@@ -140,13 +308,17 @@ def main():
         help="Output raw JSON (default: human-readable summary)"
     )
     parser.add_argument(
-        "--model", default=DEFAULT_MODEL,
-        help=f"Claude model (default: {DEFAULT_MODEL})"
+        "--model", default=None,
+        help="LLM model override (default: backend-appropriate)"
+    )
+    parser.add_argument(
+        "--backend", default=None, choices=["anthropic", "openai", "openrouter"],
+        help="Backend to use (default: auto-detect from env keys)"
     )
     args = parser.parse_args()
 
     try:
-        result = parse_intent(args.transcript, model=args.model)
+        result = parse_intent(args.transcript, model=args.model, backend=args.backend)
     except EnvironmentError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -157,9 +329,10 @@ def main():
     if args.json_out:
         print(json.dumps(result, indent=2))
     else:
-        print(f"Input:  {args.transcript!r}")
-        print(f"Action: {format_action_summary(result)}")
-        print(f"JSON:   {json.dumps(result)}")
+        print(f"Input:   {args.transcript!r}")
+        print(f"Backend: {_detect_backend()}")
+        print(f"Action:  {format_action_summary(result)}")
+        print(f"JSON:    {json.dumps(result)}")
 
 
 if __name__ == "__main__":

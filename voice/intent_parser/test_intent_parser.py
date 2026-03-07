@@ -6,8 +6,10 @@ Validates that natural language utterances map to the expected HA actions.
 Tests run WITHOUT calling the API — they validate the context builder,
 JSON structure, and the parser's output contract.
 
-For live API tests (requires ANTHROPIC_API_KEY):
+For live API tests (requires an API key):
   python3 test_intent_parser.py --live
+  python3 test_intent_parser.py --live --backend openrouter
+  python3 test_intent_parser.py --live --backend openai
 
 For dry-run structural tests:
   python3 test_intent_parser.py
@@ -200,10 +202,168 @@ class TestFormatActionSummary(unittest.TestCase):
         self.assertIn("Which room?", summary)
 
 
+class TestMultiBackend(unittest.TestCase):
+    """Tests for multi-backend support and backend auto-detection."""
+
+    def _make_openai_mock(self, json_response: str):
+        """Build a mock that matches openai.OpenAI().chat.completions.create()."""
+        mock_message = MagicMock()
+        mock_message.content = json_response
+
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        mock_completions = MagicMock()
+        mock_completions.create.return_value = mock_response
+
+        mock_chat = MagicMock()
+        mock_chat.completions = mock_completions
+
+        mock_client = MagicMock()
+        mock_client.chat = mock_chat
+
+        return mock_client
+
+    def test_detect_backend_openrouter_first(self):
+        """OpenRouter is preferred when both keys exist."""
+        from intent_parser import _detect_backend
+        orig_or = os.environ.get("OPENROUTER_API_KEY")
+        orig_oai = os.environ.get("OPENAI_API_KEY")
+        orig_ant = os.environ.get("ANTHROPIC_API_KEY")
+        orig_explicit = os.environ.get("HA_INTENT_BACKEND")
+        try:
+            os.environ["OPENROUTER_API_KEY"] = "test-key"
+            os.environ["OPENAI_API_KEY"] = "test-key"
+            os.environ["ANTHROPIC_API_KEY"] = "test-key"
+            os.environ.pop("HA_INTENT_BACKEND", None)
+            backend = _detect_backend()
+            self.assertEqual(backend, "openrouter")
+        finally:
+            for k, v in [
+                ("OPENROUTER_API_KEY", orig_or),
+                ("OPENAI_API_KEY", orig_oai),
+                ("ANTHROPIC_API_KEY", orig_ant),
+                ("HA_INTENT_BACKEND", orig_explicit),
+            ]:
+                if v is not None:
+                    os.environ[k] = v
+                else:
+                    os.environ.pop(k, None)
+
+    def test_detect_backend_explicit_override(self):
+        """HA_INTENT_BACKEND env var overrides auto-detection."""
+        from intent_parser import _detect_backend
+        orig = os.environ.get("HA_INTENT_BACKEND")
+        try:
+            os.environ["HA_INTENT_BACKEND"] = "anthropic"
+            self.assertEqual(_detect_backend(), "anthropic")
+            os.environ["HA_INTENT_BACKEND"] = "openai"
+            self.assertEqual(_detect_backend(), "openai")
+        finally:
+            if orig is not None:
+                os.environ["HA_INTENT_BACKEND"] = orig
+            else:
+                os.environ.pop("HA_INTENT_BACKEND", None)
+
+    def test_detect_backend_no_keys_raises(self):
+        """Raises EnvironmentError when no keys are set."""
+        from intent_parser import _detect_backend
+        saved = {}
+        for k in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "HA_INTENT_BACKEND"):
+            saved[k] = os.environ.pop(k, None)
+        try:
+            with self.assertRaises(EnvironmentError):
+                _detect_backend()
+        finally:
+            for k, v in saved.items():
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_openrouter_backend_via_mock(self):
+        """OpenRouter backend parses intent correctly when mocked."""
+        resp = json.dumps({
+            "action": "call_service",
+            "domain": "scene",
+            "service": "activate",
+            "entity_id": "scene.goodnight",
+            "params": {}
+        })
+
+        with patch("intent_parser._call_openrouter", return_value=resp):
+            result = parse_intent(
+                "I'm going to bed",
+                backend="openrouter",
+            )
+        self.assertEqual(result["entity_id"], "scene.goodnight")
+
+    def test_openai_backend_via_mock(self):
+        """OpenAI backend parses intent correctly when mocked."""
+        resp = json.dumps({
+            "action": "call_service",
+            "domain": "light",
+            "service": "turn_off",
+            "entity_id": "light.all",
+            "params": {}
+        })
+
+        with patch("intent_parser._call_openai", return_value=resp):
+            result = parse_intent(
+                "turn off the lights",
+                backend="openai",
+            )
+        self.assertEqual(result["action"], "call_service")
+        self.assertEqual(result["service"], "turn_off")
+
+    def test_strip_fences(self):
+        """_strip_fences handles markdown code blocks correctly."""
+        from intent_parser import _strip_fences
+        raw = '```json\n{"action": "clarify", "question": "Which room?"}\n```'
+        stripped = _strip_fences(raw)
+        self.assertFalse(stripped.startswith("```"))
+        result = json.loads(stripped)
+        self.assertEqual(result["action"], "clarify")
+
+    def test_strip_fences_no_fence_unchanged(self):
+        """_strip_fences doesn't corrupt plain JSON."""
+        from intent_parser import _strip_fences
+        raw = '{"action": "clarify", "question": "Which room?"}'
+        self.assertEqual(_strip_fences(raw), raw)
+
+
+class TestMultilingualPrompt(unittest.TestCase):
+    """Test that the system prompt contains multilingual instructions."""
+
+    def test_system_prompt_mentions_maltese(self):
+        prompt = build_system_prompt()
+        self.assertIn("Maltese", prompt)
+        self.assertIn("Malti", prompt)
+
+    def test_system_prompt_mentions_italian(self):
+        prompt = build_system_prompt()
+        self.assertIn("Italian", prompt)
+
+    def test_system_prompt_mentions_arabic(self):
+        prompt = build_system_prompt()
+        self.assertIn("Arabic", prompt)
+
+    def test_system_prompt_has_maltese_examples(self):
+        prompt = build_system_prompt()
+        # Check for at least one Maltese phrase
+        self.assertTrue(
+            "Agħlaq" in prompt or "Iftaħ" in prompt or "Sejjer" in prompt,
+            "Expected at least one Maltese phrase in system prompt"
+        )
+
+
 class TestLiveAPI(unittest.TestCase):
     """
-    Live API tests — only run with --live flag and ANTHROPIC_API_KEY set.
-    These actually call the Anthropic API and validate real responses.
+    Live API tests — only run with --live flag and an API key set.
+    These actually call a real model API and validate responses.
+
+    Backends tested in priority order: openrouter → openai → anthropic.
     """
     LIVE_CASES = [
         ("turn off the lights", "call_service"),
@@ -215,41 +375,76 @@ class TestLiveAPI(unittest.TestCase):
         ("lock the front door", "call_service"),
     ]
 
+    # Multilingual cases — parsed by the model regardless of input language
+    MULTILINGUAL_CASES = [
+        ("Agħlaq id-dawl", "call_service"),       # Maltese: turn off the lights
+        ("Sejjer norqod", "call_service"),          # Maltese: I'm going to bed
+        ("Spegni le luci", "call_service"),         # Italian: turn off the lights
+    ]
+
     @classmethod
     def setUpClass(cls):
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise unittest.SkipTest("ANTHROPIC_API_KEY not set — skipping live tests")
+        from intent_parser import _detect_backend
+        try:
+            cls.backend = _detect_backend()
+        except EnvironmentError:
+            raise unittest.SkipTest("No API key found — skipping live tests")
 
     def test_live_utterances(self):
-        import anthropic
-        client = anthropic.Anthropic()
         for transcript, expected_action in self.LIVE_CASES:
             with self.subTest(transcript=transcript):
-                result = parse_intent(transcript, client=client)
+                result = parse_intent(transcript, backend=self.backend)
                 if isinstance(result, list):
+                    actual_actions = [a.get("action") for a in result]
                     self.assertTrue(
-                        all(a.get("action") == expected_action for a in result),
-                        f"Expected all actions to be {expected_action!r} for: {transcript!r}\nGot: {result}"
+                        all(a == expected_action for a in actual_actions),
+                        f"Expected all {expected_action!r} for: {transcript!r}\nGot: {result}"
                     )
                 else:
                     self.assertEqual(
                         result.get("action"), expected_action,
                         f"Expected {expected_action!r} for: {transcript!r}\nGot: {result}"
                     )
-                print(f"  ✓ {transcript!r} → {format_action_summary(result)}")
+                print(f"  ✓ [{self.backend}] {transcript!r} → {format_action_summary(result)}")
+
+    def test_multilingual_utterances(self):
+        """Multilingual home commands should parse to valid HA actions."""
+        for transcript, expected_action in self.MULTILINGUAL_CASES:
+            with self.subTest(transcript=transcript):
+                result = parse_intent(transcript, backend=self.backend)
+                if isinstance(result, list):
+                    actual_actions = [a.get("action") for a in result]
+                    self.assertTrue(
+                        any(a == expected_action for a in actual_actions),
+                        f"Expected {expected_action!r} for: {transcript!r}\nGot: {result}"
+                    )
+                else:
+                    self.assertEqual(
+                        result.get("action"), expected_action,
+                        f"Expected {expected_action!r} for: {transcript!r}\nGot: {result}"
+                    )
+                print(f"  ✓ [{self.backend}] {transcript!r} → {format_action_summary(result)}")
 
 
 def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="Run live API tests")
+    ap.add_argument("--backend", default=None,
+                    choices=["anthropic", "openai", "openrouter"],
+                    help="Backend to use for live tests (default: auto-detect)")
     args, remaining = ap.parse_known_args()
+
+    if args.backend:
+        os.environ["HA_INTENT_BACKEND"] = args.backend
 
     if args.live:
         # Include live test class
         suite = unittest.TestLoader().loadTestsFromTestCase(TestLiveAPI)
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestHAContextBuilder))
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestIntentParserMocked))
+        suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestMultiBackend))
+        suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestMultilingualPrompt))
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestFormatActionSummary))
         runner = unittest.TextTestRunner(verbosity=2)
         result = runner.run(suite)
@@ -260,6 +455,8 @@ def main():
         suite = unittest.TestSuite()
         suite.addTests(loader.loadTestsFromTestCase(TestHAContextBuilder))
         suite.addTests(loader.loadTestsFromTestCase(TestIntentParserMocked))
+        suite.addTests(loader.loadTestsFromTestCase(TestMultiBackend))
+        suite.addTests(loader.loadTestsFromTestCase(TestMultilingualPrompt))
         suite.addTests(loader.loadTestsFromTestCase(TestFormatActionSummary))
         runner = unittest.TextTestRunner(verbosity=2)
         result = runner.run(suite)

@@ -129,6 +129,15 @@ def build_system_prompt(entities: Optional[dict] = None) -> str:
 3. If you cannot determine a valid action (ambiguous, no matching entity), return a "clarify" action.
 4. For multi-step requests (e.g. "set up for dinner and lock the door"), return a list of actions.
 5. Infer intent from natural language — users do NOT speak in commands.
+6. Accept input in any language — English, Maltese (Malti), Italian, or Arabic. Always respond in JSON regardless of input language.
+
+## Language examples
+- Maltese: "Agħlaq id-dawl" = turn off the lights
+- Maltese: "Iftaħ il-griġ" = open the shutters
+- Maltese: "Sejjer norqod" = I'm going to bed (→ scene.goodnight)
+- Italian: "Spegni le luci" = turn off the lights
+- Italian: "Prepara la cena" = set up for dinner (→ scene.dinner)
+- Arabic: "أطفئ الأضواء" = turn off the lights
 
 ## Response format
 Single action:
