@@ -3,18 +3,26 @@
 Claudette Home — openWakeWord Listener
 Uses openWakeWord for fully open-source, HA-native wake word detection.
 
+Status (2026-03-12): Model trained and ready at models/claudette.onnx
+  - 314 positive + 209 negative synthetic samples
+  - 97.1% val_recall, 0% false positives on synthetic data
+  - Needs real-world testing with a microphone
+
 Setup:
-  1. Train model via HA add-on UI or notebooks (see training/)
-  2. Download .tflite file, place in models/claudette.tflite
-  3. pip install openwakeword pyaudio numpy
+  pip install openwakeword==0.6.0 pyaudio numpy soundfile
 
 Usage:
-  python3 oww_listener.py [--model models/claudette.tflite] [--threshold 0.5]
+  python3 oww_listener.py [--model models/claudette.onnx] [--threshold 0.5]
 
-Training (standalone, no HA required):
-  git clone https://github.com/dscripka/openWakeWord
-  # Use the Jupyter notebook: notebooks/training_models.ipynb
-  # Or use HA add-on: Settings > Add-ons > openWakeWord > Open Web UI
+Re-train model:
+  python3 generate_training_data.py --count 200   # generate synthetic data
+  python3 train_claudette.py                       # train ONNX model
+  python3 train_claudette.py --quick               # quick 500-step test run
+
+Improve accuracy with real voice:
+  Record 20-30 WAVs of yourself saying 'Claudette' (16kHz mono PCM WAV)
+  Save to training_data/positive/real_*.wav
+  Re-run: python3 train_claudette.py
 """
 
 import argparse
@@ -105,8 +113,8 @@ def main():
     parser = argparse.ArgumentParser(description="Claudette Home — openWakeWord listener")
     parser.add_argument(
         "--model",
-        default=os.path.join(os.path.dirname(__file__), "models", "claudette.tflite"),
-        help="Path to .tflite model file (default: models/claudette.tflite)",
+        default=os.path.join(os.path.dirname(__file__), "models", "claudette.onnx"),
+        help="Path to .onnx model file (default: models/claudette.onnx)",
     )
     parser.add_argument(
         "--threshold",

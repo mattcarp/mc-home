@@ -1,8 +1,8 @@
 {
-  "generated": "2026-03-11T09:03:04Z",
+  "generated": "2026-03-12T09:12:03Z",
   "stats": {
-    "positive": 10,
-    "negative": 10,
+    "positive": 200,
+    "negative": 200,
     "skipped": 0
   },
   "positive_dir": "/home/sysop/projects/mc-home/voice/wake_word/training_data/positive",
