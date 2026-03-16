@@ -1,0 +1,11 @@
+# Porcupine custom model files — binary, per-platform, non-transferable
+# Do NOT commit these — download fresh from console.picovoice.ai
+*.ppn
+
+# openWakeWord trained models
+# claudette.onnx can be regenerated with train_claudette_v2.py — don't commit large binaries
+*.onnx
+
+# Keep training logs and setup notes in git
+!training_log*.json
+!*.md

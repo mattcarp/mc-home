@@ -4,10 +4,12 @@
 # Audio capture
 pyaudio>=0.2.14
 
-# Porcupine (Picovoice) — prototype wake word engine
-pvporcupine>=3.0.0
+# Porcupine (Picovoice) — primary wake word engine (switched from openWakeWord 2026-03-15)
+# v4.x: improved API, ~100ms latency, custom keyword via console.picovoice.ai
+pvporcupine>=4.0.0
 
-# openWakeWord — production wake word engine
+# openWakeWord — kept for reference; DEPRECATED for this project (see issue #9)
+# Hit embedding space collapse with custom training data — Porcupine is the correct arch
 openwakeword>=0.6.0
 
 # Shared utilities

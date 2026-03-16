@@ -6,6 +6,7 @@ models/*.onnx
 # Audio recordings used for training
 training/recordings/
 training/data/
+training_data/
 
 # Python cache
 __pycache__/
