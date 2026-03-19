@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
+  <defs>
+    <!-- Glow filter for active devices -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow-accent">
+      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#c084fc" flood-opacity="0.5"/>
+    </filter>
+    <filter id="glow-green">
+      <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#4ade80" flood-opacity="0.4"/>
+    </filter>
+    <filter id="glow-red">
+      <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#f87171" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="600" fill="#0a0a0a" rx="12"/>
+
+  <!-- House outline — Xagħra townhouse (400yr old Gozitan limestone) -->
+  <rect x="40" y="40" width="720" height="520" rx="4" fill="none" stroke="#333" stroke-width="2"/>
+
+  <!-- ═══ GROUND FLOOR ═══ -->
+
+  <!-- Entrance / Hallway — narrow corridor typical of Gozitan townhouses -->
+  <rect x="40" y="40" width="160" height="180" fill="#111" stroke="#333" stroke-width="1.5" rx="2"
+        class="room-zone" data-room="entrance"/>
+  <text x="120" y="90" text-anchor="middle" fill="#555" font-family="monospace" font-size="10" letter-spacing="1">ENTRANCE</text>
+  <!-- Front door -->
+  <rect x="44" y="160" width="40" height="6" rx="2" class="fp-door" data-entity="binary_sensor.front_door_contact" fill="#333"/>
+  <text x="64" y="155" text-anchor="middle" fill="#666" font-family="monospace" font-size="8">door</text>
+
+  <!-- Living Room — largest room, main gathering space -->
+  <rect x="200" y="40" width="320" height="240" fill="#111" stroke="#333" stroke-width="1.5" rx="2"
+        class="room-zone" data-room="living_room"/>
+  <text x="360" y="80" text-anchor="middle" fill="#555" font-family="monospace" font-size="10" letter-spacing="1">LIVING ROOM</text>
+  <!-- Furniture hints -->
+  <rect x="380" y="160" width="80" height="50" rx="4" fill="#161616" stroke="#222" stroke-width="0.5"/>
+  <text x="420" y="190" text-anchor="middle" fill="#2a2a2a" font-family="monospace" font-size="8">sofa</text>
+  <rect x="260" y="210" width="50" height="30" rx="2" fill="#161616" stroke="#222" stroke-width="0.5"/>
+  <text x="285" y="230" text-anchor="middle" fill="#2a2a2a" font-family="monospace" font-size="7">table</text>
+
+  <!-- Kitchen — adjacent to living room, Maltese open kitchen -->
+  <rect x="520" y="40" width="240" height="200" fill="#111" stroke="#333" stroke-width="1.5" rx="2"
+        class="room-zone" data-room="kitchen"/>
+  <text x="640" y="80" text-anchor="middle" fill="#555" font-family="monospace" font-size="10" letter-spacing="1">KITCHEN</text>
+  <!-- Countertop -->
+  <rect x="600" y="100" width="140" height="15" rx="2" fill="#161616" stroke="#222" stroke-width="0.5"/>
+
+  <!-- Dining Room — between kitchen and hallway -->
+  <rect x="520" y="240" width="240" height="140" fill="#111" stroke="#333" stroke-width="1.5" rx="2"
+        class="room-zone" data-room="dining_room"/>
+  <text x="640" y="280" text-anchor="middle" fill="#555" font-family="monospace" font-size="10" letter-spacing="1">DINING ROOM</text>
+  <!-- Dining table -->
+  <rect x="590" y="300" width="100" height="50" rx="4" fill="#161616" stroke="#222" stroke-width="0.5"/>
+
+  <!-- ═══ UPPER FLOOR (stacked vertically) ═══ -->
+
+  <!-- Bedroom — master bedroom -->
+  <rect x="40" y="380" width="320" height="180" fill="#111" stroke="#333" stroke-width="1.5" rx="2"
+        class="room-zone" data-room="bedroom"/>
+  <text x="200" y="420" text-anchor="middle" fill="#555" font-family="monospace" font-size="10" letter-spacing="1">BEDROOM</text>
+  <!-- Bed -->
+  <rect x="100" y="460" width="120" height="70" rx="4" fill="#161616" stroke="#222" stroke-width="0.5"/>
+  <text x="160" y="500" text-anchor="middle" fill="#2a2a2a" font-family="monospace" font-size="8">bed</text>
+
+  <!-- Hallway lower (staircase area) -->
+  <rect x="200" y="280" width="120" height="100" fill="#0e0e0e" stroke="#333" stroke-width="1" rx="2"
+        class="room-zone" data-room="hallway"/>
+  <text x="260" y="325" text-anchor="middle" fill="#444" font-family="monospace" font-size="9" letter-spacing="0.5">HALLWAY</text>
+  <!-- Stairs symbol -->
+  <line x1="230" y1="350" x2="290" y2="350" stroke="#333" stroke-width="0.5"/>
+  <line x1="230" y1="355" x2="290" y2="355" stroke="#333" stroke-width="0.5"/>
+  <line x1="230" y1="360" x2="290" y2="360" stroke="#333" stroke-width="0.5"/>
+
+  <!-- Garden / Outdoor — Gozitan courtyard -->
+  <rect x="360" y="380" width="400" height="180" fill="#0d120d" stroke="#2a3a2a" stroke-width="1.5" rx="2"
+        class="room-zone" data-room="outdoor"/>
+  <text x="560" y="420" text-anchor="middle" fill="#3a5a3a" font-family="monospace" font-size="10" letter-spacing="1">GARDEN / COURTYARD</text>
+  <!-- Planter hint -->
+  <circle cx="450" cy="480" r="15" fill="none" stroke="#2a3a2a" stroke-width="0.5"/>
+  <circle cx="650" cy="500" r="20" fill="none" stroke="#2a3a2a" stroke-width="0.5"/>
+
+  <!-- ═══ DEVICE ICONS — positioned in their rooms ═══ -->
+  <!-- These get toggled on/off by JS. Each has data-entity matching HA entity IDs -->
+
+  <!-- 💡 Lights -->
+  <g class="fp-device fp-light" data-entity="light.living_room" data-room="living_room" transform="translate(280, 120)">
+    <circle r="12" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="12" class="fp-icon">💡</text>
+  </g>
+  <g class="fp-device fp-light" data-entity="light.bedroom" data-room="bedroom" transform="translate(80, 440)">
+    <circle r="12" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="12" class="fp-icon">💡</text>
+  </g>
+  <g class="fp-device fp-light" data-entity="light.kitchen" data-room="kitchen" transform="translate(570, 100)">
+    <circle r="12" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="12" class="fp-icon">💡</text>
+  </g>
+  <g class="fp-device fp-light" data-entity="light.dining_room" data-room="dining_room" transform="translate(570, 280)">
+    <circle r="12" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="12" class="fp-icon">💡</text>
+  </g>
+  <g class="fp-device fp-light" data-entity="light.garden" data-room="outdoor" transform="translate(420, 450)">
+    <circle r="12" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="12" class="fp-icon">💡</text>
+  </g>
+  <g class="fp-device fp-light" data-entity="light.hallway" data-room="hallway" transform="translate(260, 300)">
+    <circle r="12" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="12" class="fp-icon">💡</text>
+  </g>
+
+  <!-- 🔌 Switches -->
+  <g class="fp-device fp-switch" data-entity="switch.tv" data-room="living_room" transform="translate(440, 120)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">📺</text>
+  </g>
+  <g class="fp-device fp-switch" data-entity="switch.air_conditioner" data-room="living_room" transform="translate(350, 200)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">❄️</text>
+  </g>
+  <g class="fp-device fp-switch" data-entity="switch.kettle" data-room="kitchen" transform="translate(670, 120)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">☕</text>
+  </g>
+  <g class="fp-device fp-switch" data-entity="switch.fan_bedroom" data-room="bedroom" transform="translate(300, 480)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">🌀</text>
+  </g>
+
+  <!-- 🌡️ Sensors -->
+  <g class="fp-device fp-sensor" data-entity="sensor.living_room_temperature" data-room="living_room" transform="translate(220, 200)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">🌡️</text>
+    <text text-anchor="middle" dy="22" font-size="9" fill="#4ade80" font-family="monospace" class="fp-value">21.4°</text>
+  </g>
+  <g class="fp-device fp-sensor" data-entity="sensor.living_room_humidity" data-room="living_room" transform="translate(220, 240)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">💧</text>
+    <text text-anchor="middle" dy="22" font-size="9" fill="#60a5fa" font-family="monospace" class="fp-value">58%</text>
+  </g>
+  <g class="fp-device fp-sensor" data-entity="binary_sensor.motion_living_room" data-room="living_room" transform="translate(480, 200)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">🏃</text>
+    <text text-anchor="middle" dy="22" font-size="8" fill="#666" font-family="monospace" class="fp-value">clear</text>
+  </g>
+
+  <!-- 🚪 Front door sensor -->
+  <g class="fp-device fp-sensor" data-entity="binary_sensor.front_door_contact" data-room="entrance" transform="translate(100, 140)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">🚪</text>
+    <text text-anchor="middle" dy="22" font-size="8" fill="#4ade80" font-family="monospace" class="fp-value">closed</text>
+  </g>
+
+  <!-- 🔒 Lock -->
+  <g class="fp-device fp-lock" data-entity="lock.front_door" data-room="entrance" transform="translate(100, 180)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">🔒</text>
+  </g>
+
+  <!-- 🎵 Media players -->
+  <g class="fp-device fp-media" data-entity="media_player.living_room_speaker" data-room="living_room" transform="translate(440, 250)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">🔊</text>
+  </g>
+  <g class="fp-device fp-media" data-entity="media_player.bedroom_speaker" data-room="bedroom" transform="translate(250, 440)">
+    <circle r="10" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="4" font-size="10" class="fp-icon">🔊</text>
+  </g>
+
+  <!-- ═══ SHUTTERS ═══ -->
+  <g class="fp-device fp-cover" data-entity="cover.living_room_shutters" data-room="living_room" transform="translate(360, 50)">
+    <rect x="-15" y="-6" width="30" height="12" rx="2" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="3" font-size="8" fill="#666" font-family="monospace">▤▤▤</text>
+  </g>
+  <g class="fp-device fp-cover" data-entity="cover.bedroom_shutters" data-room="bedroom" transform="translate(200, 555)">
+    <rect x="-15" y="-6" width="30" height="12" rx="2" fill="#1a1a1a" stroke="#333" stroke-width="1"/>
+    <text text-anchor="middle" dy="3" font-size="8" fill="#666" font-family="monospace">▤▤▤</text>
+  </g>
+
+  <!-- Floor label -->
+  <text x="400" y="590" text-anchor="middle" fill="#333" font-family="monospace" font-size="9" letter-spacing="2">XAGĦRA TOWNHOUSE — CLAUDETTE HOME</text>
+</svg>
