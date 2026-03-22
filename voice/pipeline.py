@@ -154,7 +154,20 @@ def record_audio_arecord(seconds: int = RECORD_SECONDS, sample_rate: int = RECOR
 
 
 def record_audio(seconds: int = RECORD_SECONDS) -> bytes:
-    """Record audio — tries PyAudio first, falls back to arecord."""
+    """Record audio — tries VAD-based recording first, then PyAudio, then arecord."""
+    try:
+        from vad_recorder import create_vad_recorder, VadConfig
+        config = VadConfig(max_duration=float(seconds))
+        recorder = create_vad_recorder(config)
+        result = recorder.record()
+        logger.info(
+            f"VAD recording: speech={result.speech_detected}, "
+            f"speech_ms={result.speech_duration_ms:.0f}, "
+            f"ended_by_silence={result.ended_by_silence}"
+        )
+        return result.audio_bytes
+    except Exception as e:
+        logger.warning(f"VAD recorder not available ({e}), falling back to fixed-time recording")
     try:
         return record_audio_pyaudio(seconds)
     except ImportError:
