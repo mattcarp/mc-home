@@ -363,7 +363,7 @@ def build_response(action: Union[dict, list], results: list) -> str:
 # Wake word event loop (reads stdout from wake_word_bridge.py)
 # ---------------------------------------------------------------------------
 
-def run_pipeline_from_stdin(stub: bool = False):
+def run_pipeline_from_stdin(stub: bool = False, ha_events: bool = False):
     """
     Main pipeline loop: reads JSON events from stdin (piped from wake_word_bridge.py).
     On wake_word_detected: records audio → STT → intent → HA.
@@ -371,6 +371,9 @@ def run_pipeline_from_stdin(stub: bool = False):
 
     Usage:
       python3 wake_word/wake_word_bridge.py | python3 pipeline.py
+
+      # With HA event emitter thread (feeds state_changed events into pipeline):
+      python3 wake_word/wake_word_bridge.py | python3 pipeline.py --ha-events
 
     In stub mode:
       echo '{"type":"wake_word_detected","word":"claudette","backend":"stub"}' | python3 pipeline.py --stub
@@ -381,7 +384,12 @@ def run_pipeline_from_stdin(stub: bool = False):
     # Initialize proactive alert pipeline integration
     alert_integration = _init_alert_integration()
 
-    logger.info(f"Pipeline started. Waiting for wake word events... (stub={stub})")
+    # Start HA event emitter thread if requested
+    ha_emitter = None
+    if ha_events and not stub:
+        ha_emitter = _init_ha_event_emitter(alert_integration)
+
+    logger.info(f"Pipeline started. Waiting for wake word events... (stub={stub}, ha_events={ha_events})")
 
     for line in sys.stdin:
         line = line.strip()
@@ -420,6 +428,32 @@ def run_pipeline_from_stdin(stub: bool = False):
 
         elif event_type == "error":
             logger.error(f"Wake word error: {event}")
+
+
+def _init_ha_event_emitter(alert_integration):
+    """
+    Start the HA WebSocket event emitter in a background thread.
+    Routes state_changed events through the alert integration.
+    Returns the emitter thread, or None if unavailable.
+    """
+    try:
+        from ha_event_emitter import HAEventEmitterThread
+
+        def on_ha_event(event):
+            """Callback from HA emitter thread → route through alert engine."""
+            if alert_integration and event.get("type") == "state_changed":
+                import json as _json
+                modes = alert_integration.on_ha_event(_json.dumps(event))
+                if modes:
+                    logger.info(f"HA event alert routing: {modes}")
+
+        emitter = HAEventEmitterThread(callback=on_ha_event)
+        emitter.start()
+        logger.info("HA event emitter thread started — proactive alerts are live")
+        return emitter
+    except Exception as e:
+        logger.warning(f"HA event emitter unavailable: {e}")
+        return None
 
 
 def _init_alert_integration():
@@ -502,7 +536,7 @@ Type=simple
 User=sysop
 WorkingDirectory=/home/sysop/projects/mc-home/voice
 # Pipe wake word bridge stdout into pipeline
-ExecStart=/bin/bash -c 'python3 wake_word/wake_word_bridge.py | python3 pipeline.py'
+ExecStart=/bin/bash -c 'python3 wake_word/wake_word_bridge.py | python3 pipeline.py --ha-events'
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=/etc/environment
@@ -543,6 +577,10 @@ def main():
         help="Skip wake word + STT; parse this text directly (text mode)"
     )
     parser.add_argument(
+        "--ha-events", action="store_true",
+        help="Start HA WebSocket event emitter thread for proactive alerts"
+    )
+    parser.add_argument(
         "--write-service", action="store_true",
         help="Write systemd service file to /etc/systemd/system/claudette-pipeline.service"
     )
@@ -556,7 +594,7 @@ def main():
         run_text_mode(args.text, stub=args.stub)
     else:
         # Read wake word events from stdin (piped from wake_word_bridge.py)
-        run_pipeline_from_stdin(stub=args.stub)
+        run_pipeline_from_stdin(stub=args.stub, ha_events=args.ha_events)
 
 
 if __name__ == "__main__":
