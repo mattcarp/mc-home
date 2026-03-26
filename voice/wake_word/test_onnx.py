@@ -1,3 +1,4 @@
+import os
 import sys
 import glob
 from pathlib import Path
@@ -5,13 +6,16 @@ import numpy as np
 from openwakeword.model import Model
 import wave
 
+# Resolve paths relative to this file's directory, not cwd
+_THIS_DIR = Path(__file__).resolve().parent
+
 def test_model():
-    model_path = "models/claudette.onnx"
+    model_path = str(_THIS_DIR / "models" / "claudette.onnx")
     print(f"Loading model {model_path}...")
     owm = Model(wakeword_models=[model_path], inference_framework="onnx")
     
-    pos_files = glob.glob("training_data/positive/*.wav")
-    neg_files = glob.glob("training_data/negative/*.wav")
+    pos_files = glob.glob(str(_THIS_DIR / "training_data" / "positive" / "*.wav"))
+    neg_files = glob.glob(str(_THIS_DIR / "training_data" / "negative" / "*.wav"))
     
     if not pos_files or not neg_files:
         print("Missing training data.")
