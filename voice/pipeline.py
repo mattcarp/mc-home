@@ -307,6 +307,53 @@ def handle_transcript(transcript: str, bridge, stub: bool = False) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Response formatting helpers
+# ---------------------------------------------------------------------------
+
+def domain_from_entity(entity_id: str) -> str:
+    """Return the domain part of an entity_id (e.g. 'sensor.temp' → 'sensor')."""
+    return entity_id.split(".")[0] if "." in entity_id else entity_id
+
+
+def _friendly_entity(entity_id: str) -> str:
+    """Turn entity_id into readable name: 'light.living_room_ceiling' → 'living room ceiling light'."""
+    parts = entity_id.split(".", 1)
+    domain = parts[0] if len(parts) > 1 else ""
+    name = parts[1] if len(parts) > 1 else entity_id
+    readable = name.replace("_", " ")
+    # Append domain hint for sensors/locks
+    if domain in ("sensor", "binary_sensor"):
+        return readable
+    if domain == "lock":
+        return f"{readable} lock"
+    if domain == "light":
+        return f"{readable} light"
+    if domain == "switch":
+        return f"{readable} switch"
+    return readable
+
+
+def _room_from_entity(entity_id: str) -> str:
+    """Extract room name from entity_id: 'sensor.living_room_temperature' → 'living room'."""
+    _ROOM_KEYWORDS = [
+        "living_room", "kitchen", "bedroom", "hallway", "entrance",
+        "dining_room", "bathroom", "garden", "courtyard", "office",
+    ]
+    lower = entity_id.lower()
+    for room in _ROOM_KEYWORDS:
+        if room in lower:
+            return room.replace("_", " ")
+    # Fallback: take the first segment after the domain
+    parts = entity_id.split(".", 1)
+    if len(parts) > 1:
+        segments = parts[1].split("_")
+        # Usually room is the first word(s) before the sensor type
+        if len(segments) >= 2:
+            return " ".join(segments[:-1])
+    return "the room"
+
+
 def build_response(action: Union[dict, list], results: list) -> str:
     """
     Build a natural-language TTS response for Claudette to speak.
@@ -323,11 +370,35 @@ def build_response(action: Union[dict, list], results: list) -> str:
         return action.get("question", "Could you clarify?")
 
     elif action_type == "query":
-        # Relay the state value
+        # Build a natural-language response for sensor/state queries
         if results and results[0].get("ok"):
             state = results[0].get("state", "unknown")
             entity_id = action.get("entity_id", "")
-            return f"The {entity_id.replace('_', ' ').replace('.', ' ')} is {state}."
+            friendly_name = results[0].get("attributes", {}).get("friendly_name", "")
+
+            # Skip stub placeholder — just report unknown
+            if state == "stub":
+                name = friendly_name or _friendly_entity(entity_id)
+                return f"I don't have a live reading for {name} yet."
+
+            # Sensor-specific natural phrasing
+            device_class = results[0].get("attributes", {}).get("device_class", "")
+            unit = results[0].get("attributes", {}).get("unit_of_measurement", "")
+            name = friendly_name or _friendly_entity(entity_id)
+
+            if device_class == "temperature" or "temperature" in entity_id:
+                return f"It's {state}{unit} in the {_room_from_entity(entity_id)}."
+            elif device_class == "humidity" or "humidity" in entity_id:
+                return f"Humidity in the {_room_from_entity(entity_id)} is {state}{unit}."
+            elif device_class in ("door", "window", "motion"):
+                open_closed = "open" if state == "on" else "closed"
+                return f"The {name} is {open_closed}."
+            elif domain_from_entity(entity_id) == "lock":
+                return f"The {name} is {state}."
+            elif unit:
+                return f"The {name} is {state} {unit}."
+            else:
+                return f"The {name} is {state}."
         return "I couldn't get that reading."
 
     elif action_type == "call_service":
