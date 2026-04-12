@@ -10,6 +10,7 @@ Capabilities:
   - Claudette TTS announcement on all/specific speakers
   - Music control (play, pause, stop, skip, source)
   - Volume snapshot/restore (for ducking around announcements)
+  - Entity auto-discovery from HA (--action sync)
 
 Usage (standalone):
   python3 whole_home_audio.py --action announce --message "Dinner is ready"
@@ -17,11 +18,13 @@ Usage (standalone):
   python3 whole_home_audio.py --action volume --zone whole_house --level 0.4
   python3 whole_home_audio.py --action doorbell --message "Someone at the front door"
   python3 whole_home_audio.py --action status
+  python3 whole_home_audio.py --action sync      # discover entities from HA
   python3 whole_home_audio.py --stub --action announce --message "Test"
 
 As a module (from intent parser response):
   from whole_home_audio import AudioController
   ctrl = AudioController()
+  ctrl.sync_entities()          # discover actual entity IDs from HA
   ctrl.announce("Dinner is ready", zone="whole_house")
   ctrl.set_volume("whole_house", 0.5)
   ctrl.doorbell_announce("Front door")
@@ -32,7 +35,7 @@ Environment:
   AUDIO_DUCK_LEVEL  — Volume level during announcements (default: 0.15)
   AUDIO_RESTORE_LEVEL — Volume level after announcements (default: 0.4)
 
-Zone → Entity Mapping:
+Zone → Entity Mapping (update entity IDs after running --action sync):
   whole_house  → media_player.whole_house (HA group)
   downstairs   → media_player.downstairs
   bedrooms     → media_player.bedrooms
@@ -40,12 +43,15 @@ Zone → Entity Mapping:
   kitchen      → media_player.echo_dot_kitchen
   bedroom      → media_player.echo_dot_bedroom
   wiim         → media_player.wiim_mini
+
+Run --action sync to auto-discover entities from HA and print updated zone mapping.
 """
 
 import argparse
 import json
 import logging
 import os
+import re
 import sys
 import time
 from typing import Dict, List, Optional, Union
@@ -469,6 +475,184 @@ class AudioController:
         reverse = {v: k for k, v in ZONE_ENTITIES.items()}
         return reverse.get(entity_id, entity_id)
 
+    @staticmethod
+    def _slugify(text: str) -> str:
+        text = (text or "").strip().lower().replace("-", " ")
+        return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+    @classmethod
+    def _tokenize(cls, *parts: str) -> List[str]:
+        tokens = []
+        for part in parts:
+            slug = cls._slugify(part)
+            if slug:
+                tokens.extend([t for t in slug.split("_") if t])
+        return tokens
+
+    @classmethod
+    def _is_group_entity(cls, entity_id: str, friendly_name: str) -> bool:
+        tokens = cls._tokenize(entity_id.replace("media_player.", ""), friendly_name)
+        token_set = set(tokens)
+        if entity_id in ("media_player.whole_house", "media_player.downstairs", "media_player.bedrooms"):
+            return True
+        if "_group" in entity_id or "group" in token_set:
+            return True
+        if {"whole", "house"}.issubset(token_set):
+            return True
+        if "downstairs" in token_set or {"ground", "floor"}.issubset(token_set):
+            return True
+        if "bedrooms" in token_set or {"bedroom", "group"}.issubset(token_set):
+            return True
+        if "all" in token_set and ("speaker" in token_set or "speakers" in token_set or "audio" in token_set):
+            return True
+        return False
+
+    @classmethod
+    def _is_echo_entity(cls, entity_id: str, friendly_name: str) -> bool:
+        tokens = cls._tokenize(entity_id.replace("media_player.", ""), friendly_name)
+        token_set = set(tokens)
+        return bool(token_set & {"echo", "alexa"})
+
+    @classmethod
+    def _is_wiim_entity(cls, entity_id: str, friendly_name: str) -> bool:
+        tokens = cls._tokenize(entity_id.replace("media_player.", ""), friendly_name)
+        token_set = set(tokens)
+        return "wiim" in token_set
+
+    @classmethod
+    def _zone_aliases_for_group(cls, entity_id: str, friendly_name: str) -> List[str]:
+        tokens = set(cls._tokenize(entity_id.replace("media_player.", ""), friendly_name))
+        aliases = []
+        if {"whole", "house"}.issubset(tokens) or "whole_house" in cls._slugify(friendly_name):
+            aliases.extend(["whole_house", "whole house", "everywhere", "all"])
+        elif "downstairs" in tokens or {"ground", "floor"}.issubset(tokens):
+            aliases.append("downstairs")
+        elif "bedrooms" in tokens or "bedroom" in tokens:
+            aliases.append("bedrooms")
+        else:
+            slug = cls._slugify(friendly_name) or cls._slugify(entity_id.replace("media_player.", ""))
+            if slug:
+                aliases.extend([slug, slug.replace("_", " ")])
+        return list(dict.fromkeys(aliases))
+
+    @classmethod
+    def _zone_aliases_for_echo(cls, entity_id: str, friendly_name: str) -> List[str]:
+        raw_entity = entity_id.replace("media_player.", "")
+        slug = cls._slugify(raw_entity)
+        prefixes = ("echo_dot_", "echo_pop_", "echo_show_", "echo_", "alexa_media_")
+        room_slug = ""
+        for prefix in prefixes:
+            if slug.startswith(prefix):
+                room_slug = slug[len(prefix):]
+                break
+        if not room_slug or room_slug.startswith("media_player"):
+            friendly_slug = cls._slugify(friendly_name)
+            removable = {"echo", "dot", "pop", "show", "alexa", "media", "player", "speaker", "speakers"}
+            room_tokens = [t for t in friendly_slug.split("_") if t and t not in removable]
+            room_slug = "_".join(room_tokens)
+        aliases = []
+        if room_slug:
+            aliases.extend([room_slug, room_slug.replace("_", " ")])
+        return list(dict.fromkeys([a for a in aliases if a]))
+
+    # -------------------------------------------------------------------
+    # Entity auto-discovery
+    # -------------------------------------------------------------------
+    def sync_entities(self) -> Dict:
+        """
+        Query HA REST API for all media_player entities, print a summary,
+        and return a dict of {friendly_name: entity_id} for discovered devices.
+
+        Use this to replace hardcoded entity IDs in ZONE_ENTITIES after
+        Alexa Media Player and WiiM integration have been set up in HA.
+
+        Returns:
+            {"entities": [...], "groups": [...], "wiim": [...],
+             "echos": [...], "suggested_zones": {...}}
+        """
+        logger.info("Querying HA for media_player entities...")
+        url = f"{self.ha_url}/api/states"
+        resp = self._requests.get(url, headers=self.headers, timeout=15)
+        resp.raise_for_status()
+        all_states = resp.json()
+
+        media_players = [s for s in all_states if s["entity_id"].startswith("media_player.")]
+
+        groups = []
+        echos = []
+        wiim_devices = []
+        others = []
+
+        for state in media_players:
+            eid = state["entity_id"]
+            attrs = state.get("attributes", {})
+            friendly = attrs.get("friendly_name", eid)
+            item = {
+                "entity_id": eid,
+                "friendly_name": friendly,
+                "state": state.get("state", "unknown"),
+            }
+            if self._is_group_entity(eid, friendly):
+                groups.append(item)
+            elif self._is_echo_entity(eid, friendly):
+                echos.append(item)
+            elif self._is_wiim_entity(eid, friendly):
+                wiim_devices.append(item)
+            else:
+                others.append(item)
+
+        # Build suggested zone mapping from discovered entities
+        suggested_zones = {}
+        for w in wiim_devices:
+            suggested_zones["wiim"] = w["entity_id"]
+            suggested_zones["hi-fi"] = w["entity_id"]
+            suggested_zones["hifi"] = w["entity_id"]
+        for g in groups:
+            for alias in self._zone_aliases_for_group(g["entity_id"], g["friendly_name"]):
+                suggested_zones[alias] = g["entity_id"]
+        for e in echos:
+            for alias in self._zone_aliases_for_echo(e["entity_id"], e["friendly_name"]):
+                suggested_zones[alias] = e["entity_id"]
+
+        result = {
+            "groups": groups,
+            "echos": echos,
+            "wiim": wiim_devices,
+            "others": others,
+            "total": len(media_players),
+            "suggested_zones": suggested_zones,
+        }
+
+        logger.info("Found %d media_player entities: %d groups, %d Echos, %d WiiM",
+                    len(media_players), len(groups), len(echos), len(wiim_devices))
+        return result
+
+    def print_entity_discovery(self) -> None:
+        """Run sync and print a human-readable report + YAML snippet."""
+        result = self.sync_entities()
+        print("\n=== Claudette Home — Entity Discovery Report ===")
+        print(f"Total media_player entities found: {result['total']}\n")
+
+        def section(title, items):
+            if not items:
+                print(f"  {title}: none found")
+                return
+            print(f"  {title}:")
+            for item in items:
+                print(f"    - {item['entity_id']}  ({item['friendly_name']}) [{item['state']}]")
+
+        section("HA Groups (whole_house, downstairs, etc.)", result["groups"])
+        section("WiiM streamers", result["wiim"])
+        section("Echo Dots", result["echos"])
+        section("Other media players", result["others"])
+
+        zones = result["suggested_zones"]
+        if zones:
+            print("\n  Suggested ZONE_ENTITIES mapping (paste into code or env):")
+            for name in sorted(zones.keys())[:15]:
+                print(f"    {name!r}: {zones[name]!r},")
+        print()
+
 
 # ---------------------------------------------------------------------------
 # Factory
@@ -493,7 +677,7 @@ def main():
     parser.add_argument(
         "--action",
         required=True,
-        choices=["announce", "doorbell", "play", "pause", "stop", "volume", "status"],
+        choices=["announce", "doorbell", "play", "pause", "stop", "volume", "status", "sync"],
         help="Action to perform",
     )
     parser.add_argument("--message", default="", help="TTS message for announce/doorbell")
@@ -538,6 +722,13 @@ def main():
 
     elif args.action == "status":
         result = ctrl.status(zone=args.zone)
+
+    elif args.action == "sync":
+        if args.stub:
+            print("ERROR: --action sync requires a real HA connection (remove --stub)", file=sys.stderr)
+            sys.exit(1)
+        ctrl.print_entity_discovery()
+        result = None
 
     else:
         print(f"Unknown action: {args.action}", file=sys.stderr)

@@ -8,9 +8,11 @@ Run:
     python3 brain/test_whole_home_audio.py
 """
 
+import io
 import sys
 import os
 import unittest
+from contextlib import redirect_stdout
 
 # Add brain dir to path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -219,6 +221,154 @@ class TestDefaultConstants(unittest.TestCase):
     def test_restore_level_is_reasonable(self):
         self.assertGreater(RESTORE_LEVEL, 0.2)
         self.assertLess(RESTORE_LEVEL, 1.0)
+
+
+class TestEntityDiscovery(unittest.TestCase):
+    """Tests for HA entity auto-discovery (sync_entities)."""
+
+    def test_sync_mentioned_in_module_doc(self):
+        """The 'sync' action should be documented in the module docstring."""
+        import whole_home_audio
+        self.assertIn("sync", whole_home_audio.__doc__)
+
+    def test_sync_entities_on_real_controller_class(self):
+        """
+        sync_entities and print_entity_discovery are on AudioController (real HA),
+        NOT on the stub (which has no network access). Verify both exist on the class.
+        """
+        import whole_home_audio as wha
+        # Real controller class has the methods
+        self.assertTrue(hasattr(wha.AudioController, "sync_entities"))
+        self.assertTrue(callable(wha.AudioController.sync_entities))
+        self.assertTrue(hasattr(wha.AudioController, "print_entity_discovery"))
+        self.assertTrue(callable(wha.AudioController.print_entity_discovery))
+        # Stub does NOT have sync_entities (needs real HA connection)
+        self.assertFalse(hasattr(wha.AudioControllerStub, "sync_entities"))
+
+
+class TestSyncEntitiesLogic(unittest.TestCase):
+    """Test the real discovery helper methods without needing a live HA box."""
+
+    def test_group_detection_handles_friendly_names_not_just_exact_ids(self):
+        from whole_home_audio import AudioController
+
+        self.assertTrue(
+            AudioController._is_group_entity(
+                "media_player.family_audio",
+                "Whole House Audio",
+            )
+        )
+        self.assertTrue(
+            AudioController._is_group_entity(
+                "media_player.ground_floor_players",
+                "Downstairs Speakers",
+            )
+        )
+        self.assertFalse(
+            AudioController._is_group_entity(
+                "media_player.echo_pop_office",
+                "Office Echo",
+            )
+        )
+
+    def test_echo_detection_handles_echo_pop_and_alexa_media_names(self):
+        from whole_home_audio import AudioController
+
+        self.assertTrue(
+            AudioController._is_echo_entity(
+                "media_player.echo_pop_office",
+                "Office Echo Pop",
+            )
+        )
+        self.assertTrue(
+            AudioController._is_echo_entity(
+                "media_player.alexa_media_kitchen",
+                "Kitchen Alexa",
+            )
+        )
+        self.assertFalse(
+            AudioController._is_echo_entity(
+                "media_player.wiim_mini",
+                "WiiM Mini",
+            )
+        )
+
+    def test_zone_aliases_can_be_derived_from_nonstandard_echo_entity_names(self):
+        from whole_home_audio import AudioController
+
+        aliases = AudioController._zone_aliases_for_echo(
+            "media_player.alexa_media_living_room",
+            "Living Room Alexa",
+        )
+        self.assertIn("living_room", aliases)
+        self.assertIn("living room", aliases)
+
+    def test_zone_aliases_fall_back_to_friendly_name_when_entity_name_is_generic(self):
+        from whole_home_audio import AudioController
+
+        aliases = AudioController._zone_aliases_for_echo(
+            "media_player.media_player_2",
+            "Kitchen Echo Dot",
+        )
+        self.assertIn("kitchen", aliases)
+
+    def test_suggested_zones_include_detected_group_aliases(self):
+        from whole_home_audio import AudioController
+
+        aliases = AudioController._zone_aliases_for_group(
+            "media_player.family_audio",
+            "Whole House Audio",
+        )
+        self.assertIn("whole_house", aliases)
+        self.assertIn("whole house", aliases)
+
+    def test_print_entity_discovery_outputs_usable_zone_mapping_for_live_setup(self):
+        from whole_home_audio import AudioController
+
+        ctrl = object.__new__(AudioController)
+        ctrl.sync_entities = lambda: {
+            "total": 3,
+            "groups": [
+                {
+                    "entity_id": "media_player.family_audio",
+                    "friendly_name": "Whole House Audio",
+                    "state": "idle",
+                }
+            ],
+            "wiim": [
+                {
+                    "entity_id": "media_player.wiim_amp_living_room",
+                    "friendly_name": "Living Room WiiM Amp",
+                    "state": "playing",
+                }
+            ],
+            "echos": [
+                {
+                    "entity_id": "media_player.media_player_2",
+                    "friendly_name": "Kitchen Echo Dot",
+                    "state": "standby",
+                }
+            ],
+            "others": [],
+            "suggested_zones": {
+                "whole_house": "media_player.family_audio",
+                "whole house": "media_player.family_audio",
+                "kitchen": "media_player.media_player_2",
+                "wiim": "media_player.wiim_amp_living_room",
+            },
+        }
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            ctrl.print_entity_discovery()
+
+        rendered = stdout.getvalue()
+        self.assertIn("Entity Discovery Report", rendered)
+        self.assertIn("media_player.family_audio", rendered)
+        self.assertIn("Kitchen Echo Dot", rendered)
+        self.assertIn("'whole_house': 'media_player.family_audio'", rendered)
+        self.assertIn("'kitchen': 'media_player.media_player_2'", rendered)
+        self.assertIn("'wiim': 'media_player.wiim_amp_living_room'", rendered)
 
 
 if __name__ == "__main__":
