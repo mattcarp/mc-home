@@ -28,6 +28,17 @@ Both run on-device. Both work on Workshop (x86) and target Android panel (ARM).
    python3 porcupine_listener.py
    ```
 
+### Porcupine built-in keyword smoke test (no custom .ppn needed)
+
+Useful for pipeline verification before the real "Claudette" keyword file exists.
+
+```bash
+cd voice/wake_word
+python3 wake_word_bridge.py --backend porcupine --builtin-keyword porcupine
+```
+
+This exercises the same JSON event bridge and audio path with a stock Porcupine keyword.
+
 ### openWakeWord (production / HA-native)
 
 1. Install requirements: pip install -r requirements.txt

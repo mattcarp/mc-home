@@ -73,6 +73,16 @@ logger.info(f"Whisper backend: {WHISPER_BACKEND}")
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base.en")
 LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "en")
 API_KEY = os.environ.get("STT_API_KEY")  # Optional auth
+MAX_AUDIO_BYTES = int(os.environ.get("STT_MAX_AUDIO_BYTES", str(5 * 1024 * 1024)))
+ALLOWED_CONTENT_TYPES = {
+    "audio/wav",
+    "audio/wave",
+    "audio/x-wav",
+    "audio/webm",
+    "audio/ogg",
+    "audio/mp4",
+    "audio/mpeg",
+}
 STUB_MODE = not WHISPER_AVAILABLE
 
 # openai-whisper uses model names without the language suffix (base.en → base)
@@ -144,6 +154,8 @@ def health():
         "mode": "stub" if STUB_MODE else "live",
         "backend": WHISPER_BACKEND,
         "model": MODEL_SIZE if not STUB_MODE else None,
+        "max_audio_bytes": MAX_AUDIO_BYTES,
+        "accepted_content_types": sorted(ALLOWED_CONTENT_TYPES),
         "whisper_loaded": _model is not None,
     }
 
@@ -165,10 +177,23 @@ async def transcribe(
     3. Use the returned text as the transcript for the intent parser
     """
     t0 = time.time()
+
+    if audio.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported audio content type: {audio.content_type}",
+        )
+
     audio_bytes = await audio.read()
 
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty audio file")
+
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio file too large ({len(audio_bytes)} bytes > {MAX_AUDIO_BYTES} bytes)",
+        )
 
     logger.info(f"Received audio: {len(audio_bytes)} bytes, type={audio.content_type}")
 

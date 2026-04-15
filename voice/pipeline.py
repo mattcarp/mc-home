@@ -291,6 +291,26 @@ def handle_transcript(transcript: str, bridge, stub: bool = False) -> dict:
 
     logger.info(f"Parsed action: {json.dumps(action)}")
 
+    # Handle conversational (non-HA) queries via OpenClaw fallback.
+    # Lists are always multi-action HA commands (e.g. "turn off lights and lock door").
+    # Dicts with action_type not in HA actions are conversational queries.
+    if isinstance(action, list):
+        action_type = "call_service"  # multi-action list always goes to HA
+    else:
+        action_type = action.get("action") if isinstance(action, dict) else None
+
+    _HA_ACTION_TYPES = {"call_service", "query", "clarify"}
+    if action_type not in _HA_ACTION_TYPES:
+        logger.info(f"Action type {action_type!r} is non-HA — routing to conversational fallback")
+        response_text = _conversational_fallback(transcript)
+        return {
+            "transcript": transcript,
+            "action": action,
+            "results": [],
+            "response": response_text,
+            "fallback": True,
+        }
+
     # Execute the action
     results = bridge.execute_action(action)
     logger.info(f"HA result: {json.dumps(results)}")
@@ -305,6 +325,27 @@ def handle_transcript(transcript: str, bridge, stub: bool = False) -> dict:
         "results": results,
         "response": response_text,
     }
+
+
+# ---------------------------------------------------------------------------
+# Conversational fallback (non-HA queries → OpenClaw)
+# ---------------------------------------------------------------------------
+
+def _conversational_fallback(transcript: str) -> str:
+    """
+    Route a non-device-control query to OpenClaw's local chat completions endpoint.
+    Falls back to a static keyword-matched response if gateway is unavailable.
+    """
+    try:
+        from conversation_fallback import ConversationFallback
+        fb = ConversationFallback(timeout=10.0)
+        return fb.respond(transcript)
+    except ImportError:
+        logger.warning("conversation_fallback not found — using generic response")
+        return "I didn't catch that as a home command. Could you try again?"
+    except Exception as e:
+        logger.warning(f"Conversational fallback error: {e}")
+        return "Sorry, I couldn't process that right now."
 
 
 # ---------------------------------------------------------------------------

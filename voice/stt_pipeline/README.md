@@ -83,4 +83,5 @@ Lists available models with latency/accuracy tradeoffs.
 - **Port 8765** — chosen to avoid conflict with Mission Control (3002), Betabase (3003).
 - **VAD filter enabled** — strips silence from audio automatically, speeds up transcription.
 - **Auth:** Optional. Set `STT_API_KEY` in `/etc/environment` to require Bearer token.
-- **16kHz mono WAV** is the ideal format from the Android panel. Other formats work via ffmpeg auto-conversion.
+- **Upload guardrails:** rejects unsupported media types with HTTP 415 and oversized uploads with HTTP 413. Configure the max payload via `STT_MAX_AUDIO_BYTES` (default 5 MiB).
+- **16kHz mono WAV** is the ideal format from the Android panel. Other accepted formats: WebM, OGG, MP4/M4A, and MP3.

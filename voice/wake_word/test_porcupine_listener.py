@@ -186,6 +186,54 @@ class TestCLIParsing(unittest.TestCase):
                 # Acceptable — some error paths use plain stderr
                 pass
 
+    def test_builtin_keyword_skips_model_requirement(self):
+        """Built-in Porcupine keywords should be allowed without a .ppn model path."""
+        import wake_word_bridge
+        with patch.object(wake_word_bridge, "run_porcupine") as mock_run:
+            with patch.object(sys, "argv", [
+                "wake_word_bridge.py",
+                "--backend", "porcupine",
+                "--access-key", "test-key",
+                "--builtin-keyword", "porcupine",
+            ]):
+                wake_word_bridge.main()
+        mock_run.assert_called_once_with(None, "test-key", 0.5, builtin_keyword="porcupine")
+
+    def test_builtin_keyword_rejects_simultaneous_model_flag(self):
+        """Custom .ppn and built-in keyword flags are mutually exclusive."""
+        env = os.environ.copy()
+        result = subprocess.run(
+            [sys.executable, str(WAKE_WORD_DIR / "wake_word_bridge.py"),
+             "--backend", "porcupine",
+             "--access-key", "test-key",
+             "--builtin-keyword", "porcupine",
+             "--model", "models/claudette_linux.ppn"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        combined = result.stdout + result.stderr
+        self.assertIn("builtin", combined.lower())
+
+    def test_missing_model_without_builtin_keyword_exits_nonzero(self):
+        """Custom Porcupine mode still requires a real model path."""
+        env = os.environ.copy()
+        result = subprocess.run(
+            [sys.executable, str(WAKE_WORD_DIR / "wake_word_bridge.py"),
+             "--backend", "porcupine",
+             "--access-key", "test-key",
+             "--model", str(WAKE_WORD_DIR / "models" / "does_not_exist.ppn")],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        combined = result.stdout + result.stderr
+        self.assertTrue("model" in combined.lower() or "not found" in combined.lower())
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Group 4: Built-in Keyword Smoke Test (requires valid access key)

@@ -6,13 +6,15 @@ Swap the backend without touching the rest of the pipeline.
 
 Usage:
   python3 wake_word_bridge.py --backend porcupine --model models/claudette_linux.ppn
+  python3 wake_word_bridge.py --backend porcupine --builtin-keyword porcupine
   python3 wake_word_bridge.py --backend oww --model models/claudette.tflite
 
 Environment:
-  WAKE_WORD_BACKEND=porcupine|oww   (default: porcupine)
-  PORCUPINE_ACCESS_KEY=...          (required for porcupine backend)
-  WAKE_WORD_MODEL=path/to/model     (optional, overrides --model default)
-  WAKE_WORD_THRESHOLD=0.5           (optional, detection threshold)
+  WAKE_WORD_BACKEND=porcupine|oww      (default: porcupine)
+  PORCUPINE_ACCESS_KEY=...             (required for porcupine backend)
+  WAKE_WORD_MODEL=path/to/model        (optional, overrides --model default)
+  WAKE_WORD_BUILTIN_KEYWORD=keyword    (optional, Porcupine built-in keyword)
+  WAKE_WORD_THRESHOLD=0.5              (optional, detection threshold)
 
 This script is the entry point for the systemd service (future).
 On detection: writes event to stdout (JSON) and triggers callback.
@@ -39,28 +41,80 @@ def emit_event(event_type: str, data: dict):
     print(json.dumps(event), flush=True)
 
 
-def on_detection(backend: str, word: str, score: float = None):
-    """Called on wake word detection. Emits event for downstream pipeline."""
+def on_detection(backend: str, word: str, score: float = None, stt_url: str = None):
+    """Called on wake word detection. Emits event and triggers STT pipeline."""
     emit_event("wake_word_detected", {
         "backend": backend,
         "word": word,
         "score": score,
     })
-    # TODO (issue #10): Signal STT pipeline to start recording
-    # TODO (issue #7): After STT, pass transcript to intent parser
+
+    # Trigger STT pipeline (issue #10): VAD record → POST to STT API
+    if stt_url:
+        try:
+            _run_stt_pipeline(stt_url)
+        except Exception as e:
+            emit_event("stt_error", {"error": str(e)})
+    else:
+        emit_event("stt_skipped", {"reason": "no STT URL configured"})
 
 
-def run_porcupine(model_path: str, access_key: str, sensitivity: float):
-    """Run Porcupine backend."""
+def _run_stt_pipeline(stt_url: str):
+    """Record speech with VAD, send to STT API, emit transcript event."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from vad_recorder import create_vad_recorder, VadConfig
+
+    emit_event("stt_recording_start", {})
+    recorder = create_vad_recorder(VadConfig(silence_timeout=1.5, max_duration=10.0))
+    result = recorder.record()
+    emit_event("stt_recording_done", {
+        "speech_detected": result.speech_detected,
+        "speech_duration_ms": result.speech_duration_ms,
+        "audio_bytes": len(result.audio_bytes),
+    })
+
+    if not result.speech_detected:
+        emit_event("stt_no_speech", {})
+        return
+
+    # POST audio to STT API
+    import urllib.request
+    req = urllib.request.Request(
+        f"{stt_url}/transcribe",
+        data=result.audio_bytes,
+        headers={"Content-Type": "audio/wav"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = json.loads(resp.read())
+
+    transcript = body.get("text", "")
+    emit_event("stt_transcript", {
+        "text": transcript,
+        "language": body.get("language"),
+        "duration_ms": body.get("duration_ms"),
+        "backend": body.get("backend"),
+    })
+    # TODO (issue #7): Pass transcript to intent parser
+
+
+def run_porcupine(model_path: str | None, access_key: str, sensitivity: float, builtin_keyword: str | None = None):
+    """Run Porcupine backend with either a custom .ppn model or a built-in keyword."""
     import struct
     import pvporcupine
     import pyaudio
 
-    porcupine = pvporcupine.create(
-        access_key=access_key,
-        keyword_paths=[model_path],
-        sensitivities=[sensitivity],
-    )
+    create_kwargs = {
+        "access_key": access_key,
+        "sensitivities": [sensitivity],
+    }
+    if builtin_keyword:
+        create_kwargs["keywords"] = [builtin_keyword]
+    else:
+        create_kwargs["keyword_paths"] = [model_path]
+
+    porcupine = pvporcupine.create(**create_kwargs)
     pa = pyaudio.PyAudio()
     stream = pa.open(
         rate=porcupine.sample_rate,
@@ -73,6 +127,7 @@ def run_porcupine(model_path: str, access_key: str, sensitivity: float):
     emit_event("listener_started", {
         "backend": "porcupine",
         "model": model_path,
+        "builtin_keyword": builtin_keyword,
         "sensitivity": sensitivity,
         "sample_rate": porcupine.sample_rate,
     })
@@ -91,7 +146,7 @@ def run_porcupine(model_path: str, access_key: str, sensitivity: float):
         pcm = stream.read(porcupine.frame_length, exception_on_overflow=False)
         pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
         if porcupine.process(pcm) >= 0:
-            on_detection("porcupine", "claudette")
+            on_detection("porcupine", builtin_keyword or "claudette", stt_url=stt_url)
 
 
 def run_oww(model_path: str, threshold: float):
@@ -126,7 +181,7 @@ def run_oww(model_path: str, threshold: float):
         audio_np = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
         for word, score in oww_model.predict(audio_np).items():
             if score >= threshold:
-                on_detection("oww", word, score)
+                on_detection("oww", word, score, stt_url=stt_url)
 
 
 def main():
@@ -143,6 +198,11 @@ def main():
         help="Path to model file (.ppn for porcupine, .tflite for oww)"
     )
     parser.add_argument(
+        "--builtin-keyword",
+        default=os.environ.get("WAKE_WORD_BUILTIN_KEYWORD"),
+        help="Porcupine built-in keyword to use instead of a custom .ppn model"
+    )
+    parser.add_argument(
         "--threshold",
         type=float,
         default=float(os.environ.get("WAKE_WORD_THRESHOLD", "0.5")),
@@ -153,22 +213,35 @@ def main():
         default=os.environ.get("PORCUPINE_ACCESS_KEY"),
         help="Picovoice access key (porcupine backend only)"
     )
+    parser.add_argument(
+        "--stt-url",
+        default=os.environ.get("STT_API_URL", ""),
+        help="STT API URL (e.g. http://127.0.0.1:8765). If set, triggers VAD+STT on wake word.",
+    )
     args = parser.parse_args()
 
-    # Default model paths by backend
-    if not args.model:
-        base = os.path.dirname(__file__)
-        if args.backend == "porcupine":
-            args.model = os.path.join(base, "models", "claudette_linux.ppn")
-        else:
-            args.model = os.path.join(base, "models", "claudette.tflite")
+    base = os.path.dirname(__file__)
+    stt_url = args.stt_url or None
 
     if args.backend == "porcupine":
+        if args.builtin_keyword and args.model:
+            print('{"error": "Use either --model or --builtin-keyword, not both"}', flush=True)
+            sys.exit(1)
         if not args.access_key:
             print('{"error": "PORCUPINE_ACCESS_KEY not set"}', flush=True)
             sys.exit(1)
-        run_porcupine(args.model, args.access_key, args.threshold)
+        if not args.builtin_keyword and not args.model:
+            args.model = os.path.join(base, "models", "claudette_linux.ppn")
+        if not args.builtin_keyword and not os.path.exists(args.model):
+            print(json.dumps({"error": f"Porcupine model not found: {args.model}"}), flush=True)
+            sys.exit(1)
+        run_porcupine(args.model, args.access_key, args.threshold, builtin_keyword=args.builtin_keyword)
     else:
+        if not args.model:
+            args.model = os.path.join(base, "models", "claudette.tflite")
+        if not os.path.exists(args.model):
+            print(json.dumps({"error": f"openWakeWord model not found: {args.model}"}), flush=True)
+            sys.exit(1)
         run_oww(args.model, args.threshold)
 
 

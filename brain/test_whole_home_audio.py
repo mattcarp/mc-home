@@ -186,6 +186,42 @@ class TestIntentRouter(unittest.TestCase):
         result = self.ctrl.execute_intent(intent)
         self.assertIsNotNone(result)
 
+
+    def test_route_play_intent(self):
+        intent = {"action": "play", "zone": "kitchen", "source": "spotify"}
+        result = self.ctrl.execute_intent(intent)
+        self.assertEqual(result["action"], "play")
+        self.assertEqual(result["zone"], "kitchen")
+        self.assertEqual(result["source"], "spotify")
+
+    def test_route_pause_intent(self):
+        self.ctrl.play("whole_house")
+        intent = {"action": "pause", "zone": "whole_house"}
+        result = self.ctrl.execute_intent(intent)
+        self.assertEqual(result["action"], "pause")
+        self.assertFalse(self.ctrl._playing.get("media_player.whole_house"))
+
+    def test_route_stop_intent(self):
+        self.ctrl.play("kitchen")
+        intent = {"action": "stop", "zone": "kitchen"}
+        result = self.ctrl.execute_intent(intent)
+        self.assertEqual(result["action"], "stop")
+        self.assertFalse(self.ctrl._playing.get("media_player.echo_dot_kitchen"))
+
+    def test_route_volume_intent(self):
+        intent = {"action": "volume", "zone": "bedroom", "level": 0.25}
+        result = self.ctrl.execute_intent(intent)
+        self.assertEqual(result["action"], "set_volume")
+        self.assertEqual(result["entity"], "media_player.echo_dot_bedroom")
+        self.assertEqual(result["level"], 0.25)
+
+    def test_route_status_intent(self):
+        self.ctrl.play("whole_house")
+        intent = {"action": "status", "zone": "whole_house"}
+        result = self.ctrl.execute_intent(intent)
+        self.assertEqual(result["state"], "playing")
+        self.assertEqual(result["entity"], "media_player.whole_house")
+
     def test_route_unknown_action(self):
         intent = {"action": "fly_to_the_moon"}
         result = self.ctrl.execute_intent(intent)

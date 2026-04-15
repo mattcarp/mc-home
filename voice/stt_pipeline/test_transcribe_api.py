@@ -269,6 +269,21 @@ class TestErrors:
         )
         assert r.status_code == 400
 
+    def test_transcribe_rejects_unsupported_media_type(self, client):
+        r = client.post(
+            "/transcribe",
+            files={"audio": ("notes.txt", io.BytesIO(b"hello"), "text/plain")},
+        )
+        assert r.status_code == 415
+
+    def test_transcribe_rejects_oversized_upload(self, client, monkeypatch, wav_bytes):
+        monkeypatch.setattr("transcribe_api.MAX_AUDIO_BYTES", 32)
+        r = client.post(
+            "/transcribe",
+            files={"audio": ("test.wav", io.BytesIO(wav_bytes), "audio/wav")},
+        )
+        assert r.status_code == 413
+
     def test_health_post_not_allowed(self, client):
         """GET-only endpoint shouldn't accept POST."""
         r = client.post("/health")

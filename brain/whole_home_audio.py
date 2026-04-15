@@ -176,6 +176,30 @@ class AudioControllerStub:
 
     def execute_intent(self, intent: Dict) -> Dict:
         """Route intent parser output → appropriate audio method."""
+        action = intent.get("action", "")
+        zone = intent.get("zone", "whole_house")
+
+        if action == "announce":
+            return self.announce(intent.get("message", ""), zone=zone)
+        if action == "doorbell_announce":
+            return self.doorbell_announce(
+                message=intent.get("message", "Someone is at the front door.")
+            )
+        if action == "play":
+            return self.play(
+                zone=zone,
+                source=intent.get("source"),
+                content_id=intent.get("content_id"),
+            )
+        if action == "pause":
+            return self.pause(zone)
+        if action == "stop":
+            return self.stop(zone)
+        if action == "volume":
+            return self.set_volume(zone, intent.get("level", RESTORE_LEVEL))
+        if action == "status":
+            return self.status(zone)
+
         return self._log("execute_intent", intent=intent)
 
 
@@ -429,17 +453,38 @@ class AudioController:
           {"action": "doorbell_announce", "message": "..."}
         """
         action = intent.get("action", "")
-        
+        zone = intent.get("zone", "whole_house")
+
         if action == "announce":
             return self.announce(
                 intent.get("message", ""),
-                zone=intent.get("zone", "whole_house"),
+                zone=zone,
             )
-        
+
         if action == "doorbell_announce":
             return self.doorbell_announce(
                 message=intent.get("message", "Someone is at the front door.")
             )
+
+        if action == "play":
+            return self.play(
+                zone=zone,
+                source=intent.get("source"),
+                content_id=intent.get("content_id"),
+                content_type=intent.get("content_type", "music"),
+            )
+
+        if action == "pause":
+            return self.pause(zone)
+
+        if action == "stop":
+            return self.stop(zone)
+
+        if action == "volume":
+            return self.set_volume(zone, intent.get("level", RESTORE_LEVEL))
+
+        if action == "status":
+            return self.status(zone)
 
         if action == "call_service":
             domain = intent.get("domain", "")
@@ -463,7 +508,7 @@ class AudioController:
                 if service == "media_stop":
                     zone = self._entity_to_zone(entity_id)
                     return self.stop(zone)
-            
+
             # Pass-through for anything else
             return self._call_service(domain, service, service_data)
 
