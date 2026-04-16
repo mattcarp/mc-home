@@ -1,16 +1,18 @@
-# Wake word detection dependencies
-# Install: pip install -r requirements.txt
+# Claudette Wake Word Detection Requirements
+# Python 3.8+
 
-# Audio capture
-pyaudio>=0.2.14
-
-# Porcupine (Picovoice) — primary wake word engine (switched from openWakeWord 2026-03-15)
-# v4.x: improved API, ~100ms latency, custom keyword via console.picovoice.ai
+# Core wake word engine
 pvporcupine>=4.0.0
 
-# openWakeWord — kept for reference; DEPRECATED for this project (see issue #9)
-# Hit embedding space collapse with custom training data — Porcupine is the correct arch
-openwakeword>=0.6.0
+# Audio recording (optional, for microphone input)
+pvrecorder>=1.2.0
 
-# Shared utilities
+# Audio file I/O
+soundfile>=0.12.0
+
+# Numerical processing
 numpy>=1.24.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
