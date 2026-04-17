@@ -1,3 +1,11 @@
+# mc-claudette-home
+
+**Part of the Claudette product family (`mc-claudette-*`). This is *the* Claudette product repo — the home automation app.**
+
+> Renamed from `mc-home` → `mc-claudette-home` on 2026-04-17 to align with the product family naming convention. See `~/workspace/systems/PROJECT-NAMING.md` for the canonical naming doc.
+
+---
+
 # Home Control — Claudette-Powered Smart Home
 
 **Not Alexa. Not Google Home. Yours.**
